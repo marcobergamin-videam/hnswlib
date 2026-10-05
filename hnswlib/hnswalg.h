@@ -242,6 +242,13 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
         return OkStatus();
     }
 
+    void setDistFunc(DISTFUNC<dist_t> f, void *param = nullptr) {
+        fstdistfunc_ = f;
+        if (param != nullptr) {
+            dist_func_param_ = param;
+        }
+    }
+
     size_t getMaxElements() {
         return max_elements_;
     }
@@ -1487,6 +1494,45 @@ class HierarchicalNSW : public AlgorithmInterface<dist_t> {
             top_candidates.pop();
         }
         return result;
+    }
+
+    void searchKnnDistancesOnly(const void *query_data, size_t k, dist_t* outDistances) const {
+        if (cur_element_count == 0) return;
+
+        tableint currObj = enterpoint_node_;
+        dist_t curdist = fstdistfunc_(query_data, getDataByInternalId(enterpoint_node_), dist_func_param_);
+
+        for (int level = maxlevel_; level > 0; level--) {
+            bool changed = true;
+            while (changed) {
+                changed = false;
+                unsigned int *data = (unsigned int *) get_linklist(currObj, level);
+                int size = getListCount(data);
+                tableint *datal = (tableint *) (data + 1);
+                for (int i = 0; i < size; i++) {
+                    tableint cand = datal[i];
+                    dist_t d = fstdistfunc_(query_data, getDataByInternalId(cand), dist_func_param_);
+                    if (d < curdist) {
+                        curdist = d;
+                        currObj = cand;
+                        changed = true;
+                    }
+                }
+            }
+        }
+
+        auto top_candidates = searchBaseLayerST<true>(currObj, query_data, std::max(ef_, k), nullptr);
+        while (top_candidates.size() > k) {
+            top_candidates.pop();
+        }
+        for (int i = static_cast<int>(k) - 1; i >= 0; --i) {
+            if (!top_candidates.empty()) {
+                outDistances[i] = top_candidates.top().first;
+                top_candidates.pop();
+            } else {
+                outDistances[i] = 0.0f;
+            }
+        }
     }
 
     using DistanceLabelVector = typename AlgorithmInterface<dist_t>::DistanceLabelVector;
